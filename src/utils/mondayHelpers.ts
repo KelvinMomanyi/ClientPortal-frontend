@@ -9,6 +9,7 @@ export type ColumnValue = {
   text?: string;
   value?: string;
   type?: string;
+  files?: FileAttachment[];
 };
 
 export type Item = {
@@ -23,6 +24,7 @@ export type ItemWithStatus = Item & {
 
 export type ItemSummary = ItemWithStatus & {
   columns: ColumnValue[];
+  files: FileAttachment[];
   owner: string;
   priority: string;
   priorityWeight: number;
@@ -46,6 +48,21 @@ export type FileAttachment = {
   id: string;
   name: string;
   url: string;
+  public_url?: string;
+  url_thumbnail?: string;
+  file_size?: number | null;
+  uploaded_at?: string | null;
+};
+
+export type ItemUpdate = {
+  id: string;
+  body: string;
+  created_at?: string | null;
+  creator?: {
+    id?: string;
+    name?: string;
+  } | null;
+  assets?: FileAttachment[];
 };
 
 // ── Status keyword sets ──────────────────────────────────────
@@ -151,7 +168,20 @@ export const findColumn = (columns: ColumnValue[], keywords: string[], types: st
   });
 
 export const getFilesFromColumn = (column: ColumnValue): FileAttachment[] => {
-  if (column.type !== 'file' || !column.value) return [];
+  if (column.type !== 'file') return [];
+
+  if (Array.isArray(column.files) && column.files.length > 0) {
+    return column.files
+      .map((file) => ({
+        ...file,
+        url: file.public_url || file.url,
+        name: file.name || 'Untitled File',
+      }))
+      .filter((file) => Boolean(file.url));
+  }
+
+  if (!column.value) return [];
+
   try {
     const parsed: unknown = JSON.parse(column.value);
     if (isRecord(parsed) && Array.isArray(parsed.files)) {
@@ -160,6 +190,10 @@ export const getFilesFromColumn = (column: ColumnValue): FileAttachment[] => {
         .map((file) => ({
           name: getString(file.name) || 'Untitled File',
           url: getString(file.url) || getString(file.public_url) || '#',
+          public_url: getString(file.public_url),
+          url_thumbnail: getString(file.url_thumbnail),
+          file_size: Number(file.file_size) || null,
+          uploaded_at: getString(file.uploaded_at) || null,
           id: getString(file.id) || getString(file.assetId) || getString(file.name) || 'file',
         }));
     }
@@ -168,6 +202,9 @@ export const getFilesFromColumn = (column: ColumnValue): FileAttachment[] => {
   }
   return [];
 };
+
+export const getItemFiles = (item: Item) =>
+  (item.column_values || []).flatMap((column) => getFilesFromColumn(column));
 
 const getDateValue = (column?: ColumnValue) => {
   if (!column?.value) return null;
@@ -227,6 +264,7 @@ const withFallback = (value: string, fallback: string) => (value === '-' ? fallb
 
 export const buildItemSummary = (item: ItemWithStatus): ItemSummary => {
   const columns = item.column_values || [];
+  const files = getItemFiles(item);
   const ownerColumn = findColumn(columns, OWNER_KEYWORDS, ['people', 'person', 'team']);
   const dueColumn = findColumn(columns, DUE_KEYWORDS, ['date', 'timeline']);
   const priorityColumn = findColumn(columns, PRIORITY_KEYWORDS);
@@ -243,6 +281,7 @@ export const buildItemSummary = (item: ItemWithStatus): ItemSummary => {
   return {
     ...item,
     columns,
+    files,
     owner,
     priority,
     priorityWeight,
