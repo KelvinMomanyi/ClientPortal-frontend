@@ -10,7 +10,9 @@ import {
   Pencil,
   Trash2,
   X,
-  ListChecks
+  ListChecks,
+  MailPlus,
+  Copy
 } from 'lucide-react';
 import adminApi from '../services/adminApi';
 
@@ -21,6 +23,8 @@ interface Client {
   name: string;
   email: string;
   portal_count: number;
+  invite_status?: 'active' | 'pending' | 'expired';
+  pending_invite_expires_at?: number | null;
 }
 
 type MondayContext = {
@@ -46,6 +50,13 @@ type PermissionsResponse = {
   itemIds: string[];
 };
 
+type InviteDetails = {
+  clientName: string;
+  email: string;
+  inviteUrl: string;
+  expiresAt: number;
+};
+
 const getApiError = (err: unknown, fallback: string) =>
   isAxiosError<{ error?: string }>(err) ? err.response?.data?.error || fallback : fallback;
 
@@ -66,6 +77,7 @@ export default function AdminDashboard() {
   const [restrictItems, setRestrictItems] = useState(false);
   const [permissionsLoading, setPermissionsLoading] = useState(false);
   const [permissionsSaving, setPermissionsSaving] = useState(false);
+  const [inviteDetails, setInviteDetails] = useState<InviteDetails | null>(null);
 
   useEffect(() => {
     // Get context from Monday
@@ -145,6 +157,27 @@ export default function AdminDashboard() {
       monday.execute('notice', { message: getApiError(err, 'Failed to save permissions'), type: 'error' });
     } finally {
       setPermissionsSaving(false);
+    }
+  };
+
+  const copyInviteLink = async () => {
+    if (!inviteDetails) return;
+    await navigator.clipboard.writeText(inviteDetails.inviteUrl);
+    monday.execute('notice', { message: 'Invite link copied', type: 'success' });
+  };
+
+  const createInvite = async (client: Client) => {
+    try {
+      const response = await adminApi.post(`/monday/clients/${client.id}/invite`);
+      setInviteDetails({
+        clientName: client.name,
+        email: client.email,
+        inviteUrl: response.data.invite.inviteUrl,
+        expiresAt: response.data.invite.expiresAt,
+      });
+      fetchClients();
+    } catch (err: unknown) {
+      monday.execute('notice', { message: getApiError(err, 'Failed to create invite'), type: 'error' });
     }
   };
 
@@ -256,10 +289,22 @@ export default function AdminDashboard() {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[#cce5ff] text-[#0073ea] text-[10px] font-bold border border-[#0073ea]/20">
-                        <CheckCircle2 className="h-3 w-3" />
-                        ACTIVE
-                      </span>
+                      {client.invite_status === 'pending' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[#fff4d6] text-[#9a6700] text-[10px] font-bold border border-[#ffad00]/30">
+                          <Clock className="h-3 w-3" />
+                          INVITED
+                        </span>
+                      ) : client.invite_status === 'expired' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-red-50 text-red-600 text-[10px] font-bold border border-red-200">
+                          <Clock className="h-3 w-3" />
+                          EXPIRED
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[#cce5ff] text-[#0073ea] text-[10px] font-bold border border-[#0073ea]/20">
+                          <CheckCircle2 className="h-3 w-3" />
+                          ACTIVE
+                        </span>
+                      )}
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-1.5">
@@ -329,6 +374,13 @@ export default function AdminDashboard() {
                           <ListChecks className="h-3 w-3" />
                           Items
                         </button>
+                        <button
+                          className="flex items-center gap-1 px-3 py-1.5 bg-white border border-[#d0d4d9] rounded hover:border-[#0073ea] hover:text-[#0073ea] transition-all text-xs font-medium"
+                          onClick={() => void createInvite(client)}
+                        >
+                          <MailPlus className="h-3 w-3" />
+                          Invite
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -358,7 +410,18 @@ export default function AdminDashboard() {
                   await adminApi.put(`/monday/clients/${editingClient.id}`, formData);
                   monday.execute('notice', { message: 'Client updated successfully!', type: 'success' });
                 } else {
-                  await adminApi.post('/monday/clients', formData);
+                  const response = await adminApi.post('/monday/clients', {
+                    ...formData,
+                    password: formData.password || undefined,
+                  });
+                  if (response.data.invite?.inviteUrl) {
+                    setInviteDetails({
+                      clientName: formData.name,
+                      email: formData.email,
+                      inviteUrl: response.data.invite.inviteUrl,
+                      expiresAt: response.data.invite.expiresAt,
+                    });
+                  }
                   monday.execute('notice', { message: 'Client created successfully!', type: 'success' });
                 }
                 setIsModalOpen(false);
@@ -395,15 +458,14 @@ export default function AdminDashboard() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-[#323338] mb-1">
-                    Password {editingClient && <span className="text-[#676879]">(Leave blank to keep current)</span>}
+                    Password {editingClient ? <span className="text-[#676879]">(Leave blank to keep current)</span> : <span className="text-[#676879]">(Optional)</span>}
                   </label>
                   <input
                     type="password"
-                    required={!editingClient}
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     className="w-full px-3 py-2 border border-[#d0d4d9] rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#0073ea] focus:border-[#0073ea]"
-                    placeholder={editingClient ? "Leave blank to ignore" : "Enter password"}
+                    placeholder={editingClient ? "Leave blank to ignore" : "Leave blank to generate invite"}
                   />
                 </div>
               </div>
@@ -424,6 +486,47 @@ export default function AdminDashboard() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {inviteDetails && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg bg-white rounded-lg shadow-xl overflow-hidden">
+            <div className="flex justify-between items-center p-5 border-b border-[#d0d4d9]">
+              <div>
+                <h2 className="text-xl font-bold text-[#323338]">Client Invite</h2>
+                <p className="text-sm text-[#676879]">{inviteDetails.clientName} - {inviteDetails.email}</p>
+              </div>
+              <button onClick={() => setInviteDetails(null)} className="text-[#676879] hover:text-[#323338]">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-5">
+              <div className="rounded-md border border-[#d0d4d9] bg-[#f5f6f8] p-3 text-sm break-all text-[#323338]">
+                {inviteDetails.inviteUrl}
+              </div>
+              <p className="mt-2 text-xs text-[#676879]">
+                Expires {new Date(inviteDetails.expiresAt).toLocaleString()}
+              </p>
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setInviteDetails(null)}
+                  className="px-4 py-2 text-sm font-medium border border-[#d0d4d9] rounded-md text-[#323338] hover:bg-[#f5f6f8]"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void copyInviteLink()}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-[#0073ea] text-white hover:bg-[#005fb8]"
+                >
+                  <Copy className="h-4 w-4" />
+                  Copy Link
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
