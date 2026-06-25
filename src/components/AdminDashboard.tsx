@@ -58,7 +58,9 @@ type InviteDetails = {
 };
 
 const getApiError = (err: unknown, fallback: string) =>
-  isAxiosError<{ error?: string }>(err) ? err.response?.data?.error || fallback : fallback;
+  isAxiosError<{ error?: string }>(err)
+    ? err.response?.data?.error || err.message || fallback
+    : fallback;
 
 export default function AdminDashboard() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -123,6 +125,7 @@ export default function AdminDashboard() {
       setRestrictItems(selectedIds.size > 0);
     } catch (err: unknown) {
       monday.execute('notice', { message: getApiError(err, 'Failed to load permissions'), type: 'error' });
+      console.error('Error loading permissions:', err);
       setPermissionClient(null);
     } finally {
       setPermissionsLoading(false);
@@ -178,6 +181,7 @@ export default function AdminDashboard() {
       fetchClients();
     } catch (err: unknown) {
       monday.execute('notice', { message: getApiError(err, 'Failed to create invite'), type: 'error' });
+      console.error('Error creating invite:', err);
     }
   };
 
@@ -340,6 +344,7 @@ export default function AdminDashboard() {
                               fetchClients();
                             } catch (err: unknown) {
                               monday.execute('notice', { message: getApiError(err, 'Failed to delete client'), type: 'error' });
+                              console.error('Error deleting client:', err);
                             }
                           }}
                           className="p-1.5 text-[#676879] hover:text-red-500 transition-colors"
@@ -358,6 +363,7 @@ export default function AdminDashboard() {
                                 })
                                 .catch((err: unknown) => {
                                   monday.execute('notice', { message: getApiError(err, 'Failed to assign board'), type: 'error' });
+                                  console.error('Error assigning board:', err);
                                 });
                             } else {
                               monday.execute('notice', { message: 'Open this view in a board to assign it!', type: 'warn' });
