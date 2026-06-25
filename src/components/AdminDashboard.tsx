@@ -29,6 +29,7 @@ interface Client {
 
 type MondayContext = {
   boardId?: number | string;
+  isViewOnly?: boolean;
 };
 
 type BoardItem = {
@@ -84,10 +85,17 @@ export default function AdminDashboard() {
   useEffect(() => {
     // Get context from Monday
     monday.get('context').then((res) => {
-      setContext(res.data as MondayContext);
+      const nextContext = res.data as MondayContext;
+      setContext(nextContext);
+      if (nextContext.isViewOnly) {
+        setError('As a viewer, you are unable to use the client portal manager.');
+        setLoading(false);
+        return;
+      }
+      fetchClients();
+    }).catch(() => {
+      fetchClients();
     });
-
-    fetchClients();
   }, []);
 
   const fetchClients = async () => {
@@ -104,6 +112,11 @@ export default function AdminDashboard() {
   };
 
   const openPermissions = async (client: Client) => {
+    if (context?.isViewOnly) {
+      monday.execute('notice', { message: 'As a viewer, you are unable to manage item permissions.', type: 'warn' });
+      return;
+    }
+
     const boardId = context?.boardId;
     if (!boardId) {
       monday.execute('notice', { message: 'Open this view in a board to manage item permissions.', type: 'warn' });
@@ -147,6 +160,10 @@ export default function AdminDashboard() {
   const savePermissions = async () => {
     const boardId = context?.boardId;
     if (!permissionClient || !boardId) return;
+    if (context?.isViewOnly) {
+      monday.execute('notice', { message: 'As a viewer, you are unable to save item permissions.', type: 'warn' });
+      return;
+    }
 
     try {
       setPermissionsSaving(true);
@@ -170,6 +187,11 @@ export default function AdminDashboard() {
   };
 
   const createInvite = async (client: Client) => {
+    if (context?.isViewOnly) {
+      monday.execute('notice', { message: 'As a viewer, you are unable to create invites.', type: 'warn' });
+      return;
+    }
+
     try {
       const response = await adminApi.post(`/monday/clients/${client.id}/invite`);
       setInviteDetails({
@@ -202,6 +224,7 @@ export default function AdminDashboard() {
         </div>
         <button 
           className="flex items-center gap-2 rounded-md bg-[#0073ea] px-4 py-2 text-sm font-medium text-white hover:bg-[#005fb8] transition-colors"
+          disabled={context?.isViewOnly}
           onClick={() => {
             setEditingClient(null);
             setFormData({ name: '', email: '', password: '' });
@@ -214,6 +237,12 @@ export default function AdminDashboard() {
       </header>
 
       <div className="grid gap-6">
+        {context?.isViewOnly && (
+          <div className="rounded-lg border border-[#ffad00]/40 bg-[#fff4d6] px-4 py-3 text-sm text-[#6b4b00]">
+            As a viewer, you are unable to create clients, assign boards, or change item permissions.
+          </div>
+        )}
+
         {/* Stats Section */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white p-5 rounded-lg border border-[#d0d4d9] shadow-sm">
@@ -326,10 +355,12 @@ export default function AdminDashboard() {
                       <div className="flex items-center justify-end gap-2">
                         <button 
                           onClick={() => {
+                            if (context?.isViewOnly) return;
                             setEditingClient(client);
                             setFormData({ name: client.name, email: client.email, password: '' });
                             setIsModalOpen(true);
                           }}
+                          disabled={context?.isViewOnly}
                           className="p-1.5 text-[#676879] hover:text-[#0073ea] transition-colors"
                           title="Edit Client"
                         >
@@ -337,6 +368,7 @@ export default function AdminDashboard() {
                         </button>
                         <button 
                           onClick={async () => {
+                            if (context?.isViewOnly) return;
                             if (!window.confirm('Are you sure you want to delete this client? All standard portal assignments will be removed.')) return;
                             try {
                               await adminApi.delete(`/monday/clients/${client.id}`);
@@ -347,6 +379,7 @@ export default function AdminDashboard() {
                               console.error('Error deleting client:', err);
                             }
                           }}
+                          disabled={context?.isViewOnly}
                           className="p-1.5 text-[#676879] hover:text-red-500 transition-colors"
                           title="Delete Client"
                         >
@@ -354,7 +387,9 @@ export default function AdminDashboard() {
                         </button>
                         <button 
                           className="flex items-center gap-1 px-3 py-1.5 bg-white border border-[#d0d4d9] rounded hover:border-[#0073ea] hover:text-[#0073ea] transition-all text-xs font-medium"
+                          disabled={context?.isViewOnly}
                           onClick={() => {
+                            if (context?.isViewOnly) return;
                             if (context?.boardId) {
                                adminApi.post('/monday/admin/assign', { clientId: client.id, boardId: context.boardId })
                                 .then(() => {
@@ -375,6 +410,7 @@ export default function AdminDashboard() {
                         </button>
                         <button
                           className="flex items-center gap-1 px-3 py-1.5 bg-white border border-[#d0d4d9] rounded hover:border-[#0073ea] hover:text-[#0073ea] transition-all text-xs font-medium"
+                          disabled={context?.isViewOnly}
                           onClick={() => void openPermissions(client)}
                         >
                           <ListChecks className="h-3 w-3" />
@@ -382,6 +418,7 @@ export default function AdminDashboard() {
                         </button>
                         <button
                           className="flex items-center gap-1 px-3 py-1.5 bg-white border border-[#d0d4d9] rounded hover:border-[#0073ea] hover:text-[#0073ea] transition-all text-xs font-medium"
+                          disabled={context?.isViewOnly}
                           onClick={() => void createInvite(client)}
                         >
                           <MailPlus className="h-3 w-3" />

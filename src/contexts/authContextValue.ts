@@ -4,6 +4,7 @@ export type Client = {
   id: number;
   name: string;
   email: string;
+  accountId?: string;
 };
 
 export type AuthContextType = {

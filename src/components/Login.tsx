@@ -6,9 +6,15 @@ import api from '../services/api';
 import { useAuth } from '../contexts/authContextValue';
 import { useToast } from '../contexts/toastContextValue';
 
+type AccountOption = {
+  accountId: string;
+};
+
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [accountId, setAccountId] = useState('');
+  const [accountOptions, setAccountOptions] = useState<AccountOption[]>([]);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const { login } = useAuth();
@@ -18,12 +24,31 @@ export default function Login() {
     e.preventDefault();
     try {
       setLoading(true);
-      const response = await api.post('/auth/login', { email, password });
+      const response = await api.post('/auth/login', {
+        email,
+        password,
+        accountId: accountId || undefined,
+      });
       login(response.data.token, response.data.client);
+      setAccountOptions([]);
       toast('Welcome back!', 'success');
       navigate('/dashboard');
     } catch (err: unknown) {
-      const message = isAxiosError<{ error?: string }>(err) ? err.response?.data?.error : undefined;
+      const responseData = isAxiosError<{
+        error?: string;
+        code?: string;
+        accounts?: AccountOption[];
+      }>(err)
+        ? err.response?.data
+        : undefined;
+      if (responseData?.code === 'ACCOUNT_SELECTION_REQUIRED' && responseData.accounts?.length) {
+        setAccountOptions(responseData.accounts);
+        setAccountId(responseData.accounts[0].accountId);
+        toast(responseData.error || 'Select a workspace to continue.', 'error');
+        return;
+      }
+
+      const message = responseData?.error;
       toast(message || 'Invalid credentials', 'error');
     } finally {
       setLoading(false);
@@ -74,6 +99,26 @@ export default function Login() {
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
+            {accountOptions.length > 0 && (
+              <div>
+                <label htmlFor="login-account" className="block text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--muted)] mb-1.5">
+                  Workspace
+                </label>
+                <select
+                  id="login-account"
+                  required
+                  className="block w-full px-4 py-3 border border-[color:var(--border)] rounded-xl text-sm text-[color:var(--ink)] bg-white focus:outline-none focus:ring-2 focus:ring-[color:var(--brand)] focus:border-transparent transition"
+                  value={accountId}
+                  onChange={(e) => setAccountId(e.target.value)}
+                >
+                  {accountOptions.map((option) => (
+                    <option key={option.accountId} value={option.accountId}>
+                      monday account {option.accountId}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           <button

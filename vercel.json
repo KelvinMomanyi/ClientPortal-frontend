@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/monday-app-association.json",
+      "destination": "https://client-portal-backend.vercel.app/monday-app-association.json"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
