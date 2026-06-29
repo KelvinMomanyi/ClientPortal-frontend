@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { ExternalLink, MessageSquare, Paperclip, RefreshCw, Send } from 'lucide-react';
+import { isAxiosError } from 'axios';
 import api from '../services/api';
 import { useToast } from '../contexts/toastContextValue';
 import type { FileAttachment, ItemSummary, ItemUpdate } from '../utils/mondayHelpers';
@@ -56,7 +57,7 @@ export default function ItemRow({
       setUpdatesLoaded(true);
     } catch (err) {
       console.error('Failed to load item updates', err);
-      toast('Failed to load comments. Please try again.', 'error');
+      toast(getApiError(err, 'Failed to load comments. Please try again.'), 'error');
     } finally {
       setLoadingUpdates(false);
     }
@@ -88,7 +89,7 @@ export default function ItemRow({
       toast('Comment posted to Monday.', 'success');
     } catch (err) {
       console.error('Failed to post item update', err);
-      toast('Failed to post comment. Please try again.', 'error');
+      toast(getApiError(err, 'Failed to post comment. Please try again.'), 'error');
     } finally {
       setPostingComment(false);
     }
@@ -337,6 +338,12 @@ export default function ItemRow({
       </details>
     </div>
   );
+}
+
+function getApiError(err: unknown, fallback: string) {
+  return isAxiosError<{ error?: string }>(err)
+    ? err.response?.data?.error || err.message || fallback
+    : fallback;
 }
 
 function formatFileSize(size: number) {

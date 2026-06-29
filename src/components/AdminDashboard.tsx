@@ -12,7 +12,8 @@ import {
   X,
   ListChecks,
   MailPlus,
-  Copy
+  Copy,
+  CreditCard
 } from 'lucide-react';
 import adminApi from '../services/adminApi';
 
@@ -58,6 +59,30 @@ type InviteDetails = {
   expiresAt: number;
 };
 
+type BillingMetric = {
+  metric: string;
+  label: string;
+  used: number;
+  limit: number | null;
+  remaining: number | null;
+  unlimited: boolean;
+};
+
+type BillingSummary = {
+  status: string;
+  active: boolean;
+  plan: {
+    code: string;
+    label: string;
+  };
+  usage: {
+    clients: BillingMetric;
+    boards: BillingMetric;
+    itemPermissions: BillingMetric;
+    clientUpdatesMonthly: BillingMetric;
+  };
+};
+
 const getApiError = (err: unknown, fallback: string) =>
   isAxiosError<{ error?: string }>(err)
     ? err.response?.data?.error || err.message || fallback
@@ -65,6 +90,7 @@ const getApiError = (err: unknown, fallback: string) =>
 
 export default function AdminDashboard() {
   const [clients, setClients] = useState<Client[]>([]);
+  const [billing, setBilling] = useState<BillingSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -103,6 +129,7 @@ export default function AdminDashboard() {
       setLoading(true);
       const response = await adminApi.get('/monday/clients');
       setClients(response.data.clients || []);
+      setBilling(response.data.billing || null);
     } catch (err: unknown) {
       console.error('Error fetching clients:', err);
       setError(getApiError(err, 'Failed to load clients. Please check if the backend is running.'));
@@ -244,7 +271,7 @@ export default function AdminDashboard() {
         )}
 
         {/* Stats Section */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-white p-5 rounded-lg border border-[#d0d4d9] shadow-sm">
             <p className="text-xs uppercase font-bold text-[#676879] mb-1">Total Clients</p>
             <p className="text-3xl font-bold">{clients.length}</p>
@@ -256,10 +283,47 @@ export default function AdminDashboard() {
             </p>
           </div>
           <div className="bg-white p-5 rounded-lg border border-[#d0d4d9] shadow-sm">
-            <p className="text-xs uppercase font-bold text-[#676879] mb-1">Pending Syncs</p>
-            <p className="text-3xl font-bold text-[#ffad00]">0</p>
+            <p className="text-xs uppercase font-bold text-[#676879] mb-1">Plan</p>
+            <p className="text-2xl font-bold text-[#323338]">{billing?.plan.label || '-'}</p>
+            <p className={`text-xs font-semibold ${billing?.active === false ? 'text-red-600' : 'text-[#00a25b]'}`}>
+              {billing?.status || 'active'}
+            </p>
+          </div>
+          <div className="bg-white p-5 rounded-lg border border-[#d0d4d9] shadow-sm">
+            <div className="flex items-center gap-2 mb-1">
+              <CreditCard className="h-4 w-4 text-[#0073ea]" />
+              <p className="text-xs uppercase font-bold text-[#676879]">Monthly Comments</p>
+            </div>
+            <p className="text-2xl font-bold text-[#323338]">
+              {billing ? formatUsage(billing.usage.clientUpdatesMonthly) : '-'}
+            </p>
+            <p className="text-xs text-[#676879]">Client-posted updates</p>
           </div>
         </div>
+
+        {billing && (
+          <div className="grid gap-3 rounded-lg border border-[#d0d4d9] bg-white p-4 shadow-sm md:grid-cols-4">
+            {[
+              billing.usage.clients,
+              billing.usage.boards,
+              billing.usage.itemPermissions,
+              billing.usage.clientUpdatesMonthly,
+            ].map((metric) => (
+              <div key={metric.metric}>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-bold uppercase text-[#676879]">{metric.label}</p>
+                  <p className="text-xs font-semibold text-[#323338]">{formatUsage(metric)}</p>
+                </div>
+                <div className="mt-2 h-2 rounded-full bg-[#f5f6f8]">
+                  <div
+                    className="h-2 rounded-full bg-[#0073ea]"
+                    style={{ width: `${getUsagePercent(metric)}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Search & Filter */}
         <div className="flex items-center gap-4 bg-white p-4 rounded-lg border border-[#d0d4d9] shadow-sm">
@@ -652,4 +716,13 @@ export default function AdminDashboard() {
       )}
     </div>
   );
+}
+
+function formatUsage(metric: BillingMetric) {
+  return metric.unlimited || metric.limit === null ? `${metric.used}/unlimited` : `${metric.used}/${metric.limit}`;
+}
+
+function getUsagePercent(metric: BillingMetric) {
+  if (metric.unlimited || metric.limit === null || metric.limit <= 0) return 0;
+  return Math.min(Math.round((metric.used / metric.limit) * 100), 100);
 }
