@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react';
-import { ExternalLink, MessageSquare, Paperclip, RefreshCw, Send } from 'lucide-react';
+import { BadgeCheck, ExternalLink, FileQuestion, History, MessageSquare, Paperclip, RefreshCw, Send } from 'lucide-react';
 import { isAxiosError } from 'axios';
 import api from '../services/api';
 import { useToast } from '../contexts/toastContextValue';
-import type { FileAttachment, ItemSummary, ItemUpdate } from '../utils/mondayHelpers';
+import type { ClientFileRequest, FileAttachment, ItemApproval, ItemSummary, ItemUpdate } from '../utils/mondayHelpers';
 import { getStatusTone, getColumnValue, getFilesFromColumn } from '../utils/mondayHelpers';
 
 export default function ItemRow({
@@ -24,25 +24,86 @@ export default function ItemRow({
   const [commentsError, setCommentsError] = useState<string | null>(null);
   const [comment, setComment] = useState('');
   const [postingComment, setPostingComment] = useState(false);
+  const [approvalReason, setApprovalReason] = useState('');
+  const [showChangeReason, setShowChangeReason] = useState(false);
+  const [submittingApproval, setSubmittingApproval] = useState(false);
+  const [fileDrafts, setFileDrafts] = useState<Record<number, { links: string; note: string }>>({});
+  const [submittingFileRequestId, setSubmittingFileRequestId] = useState<number | null>(null);
   const { toast } = useToast();
   const itemFiles = item.files || [];
+  const approval = item.clientPortal?.approval || defaultApproval;
+  const fileRequests = item.clientPortal?.fileRequests || [];
+  const openFileRequests = fileRequests.filter((request) => request.status === 'open');
+  const itemActivity = item.clientPortal?.activity || [];
 
-  const handleUpdateStatus = async (newStatus: string) => {
+  const submitApproval = async (decision: 'approved' | 'changes_requested', reason = '') => {
     try {
+      setSubmittingApproval(true);
       setUpdating(true);
-      await api.post('/monday/status-update', {
+      await api.post(`/monday/items/${item.id}/approval`, {
         boardId,
-        itemId: item.id,
-        status: newStatus,
-        columnId: item.statusColumnId,
+        decision,
+        reason,
+        statusColumnId: item.statusColumnId,
       });
-      toast(`Status updated to "${newStatus}"`, 'success');
+      setApprovalReason('');
+      setShowChangeReason(false);
+      toast(decision === 'approved' ? 'Item approved.' : 'Changes requested.', 'success');
       onStatusUpdate();
     } catch (err) {
-      console.error('Failed to update status', err);
-      toast('Failed to update status. Please try again.', 'error');
+      console.error('Failed to submit approval decision', err);
+      toast(getApiError(err, 'Failed to submit approval decision. Please try again.'), 'error');
     } finally {
+      setSubmittingApproval(false);
       setUpdating(false);
+    }
+  };
+
+  const requestChanges = () => {
+    const trimmed = approvalReason.trim();
+    if (!showChangeReason) {
+      setShowChangeReason(true);
+      return;
+    }
+    if (!trimmed) {
+      toast('Please add the reason for requested changes.', 'error');
+      return;
+    }
+    void submitApproval('changes_requested', trimmed);
+  };
+
+  const updateFileDraft = (requestId: number, patch: Partial<{ links: string; note: string }>) => {
+    setFileDrafts((current) => ({
+      ...current,
+      [requestId]: {
+        links: current[requestId]?.links || '',
+        note: current[requestId]?.note || '',
+        ...patch,
+      },
+    }));
+  };
+
+  const submitFileRequest = async (event: FormEvent<HTMLFormElement>, request: ClientFileRequest) => {
+    event.preventDefault();
+    const draft = fileDrafts[request.id] || { links: '', note: '' };
+    if (!draft.links.trim() && !draft.note.trim()) {
+      toast('Add at least one file link or a note.', 'error');
+      return;
+    }
+
+    try {
+      setSubmittingFileRequestId(request.id);
+      await api.post(`/monday/file-requests/${request.id}/submit`, {
+        links: draft.links,
+        note: draft.note,
+      });
+      toast('File response submitted.', 'success');
+      onStatusUpdate();
+    } catch (err) {
+      console.error('Failed to submit file request', err);
+      toast(getApiError(err, 'Failed to submit file response.'), 'error');
+    } finally {
+      setSubmittingFileRequestId(null);
     }
   };
 
@@ -153,19 +214,22 @@ export default function ItemRow({
           </div>
         </div>
         <div className={`text-sm ${priorityClass}`}>{item.priority}</div>
-        <div className="flex gap-2">
-          {item.statusLabel.toLowerCase() === 'working on it' || item.statusLabel.toLowerCase() === 'stuck' ? (
+        <div className="flex flex-wrap gap-2">
+          <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${getApprovalTone(approval)}`}>
+            {formatApprovalLabel(approval)}
+          </span>
+          {approval.status !== 'approved' ? (
             <>
               <button
-                disabled={updating}
-                onClick={() => handleUpdateStatus('Done')}
+                disabled={updating || submittingApproval}
+                onClick={() => void submitApproval('approved')}
                 className="px-3 py-1 bg-emerald-600 text-white text-xs font-bold rounded-md hover:bg-emerald-700 disabled:opacity-50 transition"
               >
                 {updating ? '...' : 'Approve'}
               </button>
               <button
-                disabled={updating}
-                onClick={() => handleUpdateStatus('Stuck')}
+                disabled={updating || submittingApproval}
+                onClick={requestChanges}
                 className="px-3 py-1 bg-rose-600 text-white text-xs font-bold rounded-md hover:bg-rose-700 disabled:opacity-50 transition"
               >
                 {updating ? '...' : 'Request Changes'}
@@ -174,6 +238,36 @@ export default function ItemRow({
           ) : null}
         </div>
       </div>
+
+      {showChangeReason && approval.status !== 'approved' && (
+        <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3">
+          <label className="text-xs font-semibold text-rose-700">Reason for requested changes</label>
+          <textarea
+            value={approvalReason}
+            onChange={(event) => setApprovalReason(event.target.value)}
+            rows={3}
+            maxLength={2000}
+            className="mt-2 w-full rounded-lg border border-rose-200 bg-white px-3 py-2 text-sm text-[color:var(--ink)] outline-none focus:border-rose-400"
+          />
+          <div className="mt-2 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowChangeReason(false)}
+              className="rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={submittingApproval}
+              onClick={requestChanges}
+              className="rounded-full bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+            >
+              Send request
+            </button>
+          </div>
+        </div>
+      )}
 
       {itemFiles.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
@@ -206,6 +300,92 @@ export default function ItemRow({
         <div className="mt-3 space-y-4">
           {showDetails && (
             <>
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-xl border border-[color:var(--border)] bg-white p-3">
+                  <div className="flex items-center gap-2">
+                    <BadgeCheck className="h-4 w-4 text-[color:var(--brand)]" />
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--muted)]">Approval</p>
+                  </div>
+                  <p className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getApprovalTone(approval)}`}>
+                    {formatApprovalLabel(approval)}
+                  </p>
+                  {approval.reason ? (
+                    <p className="mt-2 text-sm text-[color:var(--ink)]">{approval.reason}</p>
+                  ) : null}
+                </div>
+                <div className="rounded-xl border border-[color:var(--border)] bg-white p-3">
+                  <div className="flex items-center gap-2">
+                    <FileQuestion className="h-4 w-4 text-[color:var(--brand)]" />
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--muted)]">File Requests</p>
+                  </div>
+                  <p className="mt-2 text-sm font-semibold text-[color:var(--ink)]">{openFileRequests.length} open</p>
+                  <p className="text-xs text-[color:var(--muted)]">{fileRequests.length} total requests</p>
+                </div>
+                <div className="rounded-xl border border-[color:var(--border)] bg-white p-3">
+                  <div className="flex items-center gap-2">
+                    <History className="h-4 w-4 text-[color:var(--brand)]" />
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--muted)]">Activity</p>
+                  </div>
+                  <p className="mt-2 text-sm font-semibold text-[color:var(--ink)]">{itemActivity.length} recent events</p>
+                </div>
+              </div>
+
+              {openFileRequests.length > 0 && (
+                <div className="rounded-xl border border-sky-200 bg-sky-50 p-3">
+                  <div className="mb-3 flex items-center gap-2">
+                    <FileQuestion className="h-4 w-4 text-sky-700" />
+                    <p className="text-sm font-semibold text-sky-900">Requested files</p>
+                  </div>
+                  <div className="space-y-3">
+                    {openFileRequests.map((request) => (
+                      <form
+                        key={request.id}
+                        onSubmit={(event) => void submitFileRequest(event, request)}
+                        className="rounded-lg border border-sky-200 bg-white p-3"
+                      >
+                        <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-[color:var(--ink)]">{request.title}</p>
+                            {request.instructions ? (
+                              <p className="mt-1 text-xs text-[color:var(--muted)]">{request.instructions}</p>
+                            ) : null}
+                          </div>
+                          {request.dueAt ? (
+                            <span className="text-[11px] font-semibold text-sky-700">
+                              Due {formatTimestamp(request.dueAt)}
+                            </span>
+                          ) : null}
+                        </div>
+                        <textarea
+                          value={fileDrafts[request.id]?.links || ''}
+                          onChange={(event) => updateFileDraft(request.id, { links: event.target.value })}
+                          rows={2}
+                          placeholder="Paste file links, one per line"
+                          className="mt-3 w-full rounded-lg border border-sky-200 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                        />
+                        <textarea
+                          value={fileDrafts[request.id]?.note || ''}
+                          onChange={(event) => updateFileDraft(request.id, { note: event.target.value })}
+                          rows={2}
+                          placeholder="Optional note"
+                          className="mt-2 w-full rounded-lg border border-sky-200 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                        />
+                        <div className="mt-2 flex justify-end">
+                          <button
+                            type="submit"
+                            disabled={submittingFileRequestId === request.id}
+                            className="inline-flex items-center gap-2 rounded-full bg-sky-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                          >
+                            <Send className="h-3.5 w-3.5" />
+                            {submittingFileRequestId === request.id ? 'Submitting...' : 'Submit files'}
+                          </button>
+                        </div>
+                      </form>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {item.columns.length === 0 ? (
                 <div className="text-sm text-[color:var(--muted)]">No fields available for this item.</div>
               ) : (
@@ -346,10 +526,46 @@ export default function ItemRow({
               </div>
             </form>
           </div>
+
+          {itemActivity.length > 0 && (
+            <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-3">
+              <div className="mb-2 flex items-center gap-2">
+                <History className="h-4 w-4 text-[color:var(--brand)]" />
+                <p className="text-sm font-semibold text-[color:var(--ink)]">Decision history</p>
+              </div>
+              <div className="space-y-2">
+                {itemActivity.map((event) => (
+                  <div key={event.id} className="rounded-lg border border-[color:var(--border)] bg-white px-3 py-2">
+                    <p className="text-sm font-semibold text-[color:var(--ink)]">{event.summary}</p>
+                    <p className="text-xs text-[color:var(--muted)]">{formatTimestamp(event.createdAt)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </details>
     </div>
   );
+}
+
+const defaultApproval: ItemApproval = {
+  status: 'pending',
+  reason: '',
+  decidedAt: null,
+  updatedAt: null,
+};
+
+function getApprovalTone(approval: ItemApproval) {
+  if (approval.status === 'approved') return 'bg-emerald-100 text-emerald-800 ring-emerald-200';
+  if (approval.status === 'changes_requested') return 'bg-rose-100 text-rose-800 ring-rose-200';
+  return 'bg-sky-100 text-sky-800 ring-sky-200';
+}
+
+function formatApprovalLabel(approval: ItemApproval) {
+  if (approval.status === 'approved') return 'Approved';
+  if (approval.status === 'changes_requested') return 'Changes requested';
+  return 'Pending approval';
 }
 
 function getApiError(err: unknown, fallback: string) {
@@ -369,6 +585,17 @@ function formatUpdateTimestamp(value?: string | null) {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
+  return formatDate(date);
+}
+
+function formatTimestamp(value?: number | string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return formatDate(date);
+}
+
+function formatDate(date: Date) {
   return date.toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',

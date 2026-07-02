@@ -12,10 +12,63 @@ export type ColumnValue = {
   files?: FileAttachment[];
 };
 
+export type PortalSettings = {
+  portalName: string;
+  logoUrl: string;
+  primaryColor: string;
+  welcomeMessage: string;
+  supportEmail: string;
+};
+
+export type ClientActivityEvent = {
+  id: number;
+  clientId?: number | null;
+  boardId?: string | null;
+  itemId?: string | null;
+  eventType: string;
+  actorType: string;
+  actorName: string;
+  summary: string;
+  metadata?: Record<string, unknown>;
+  createdAt: number;
+};
+
+export type ItemApproval = {
+  id?: number;
+  status: 'pending' | 'approved' | 'changes_requested';
+  reason?: string;
+  decidedAt?: number | null;
+  updatedAt?: number | null;
+};
+
+export type ClientFileRequest = {
+  id: number;
+  clientId: number;
+  boardId: string;
+  itemId: string;
+  title: string;
+  instructions: string;
+  dueAt?: number | null;
+  status: 'open' | 'submitted' | 'closed';
+  requestedBy?: string;
+  responseNote?: string;
+  responseLinks?: string[];
+  respondedAt?: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type ClientPortalMeta = {
+  approval: ItemApproval;
+  fileRequests: ClientFileRequest[];
+  activity: ClientActivityEvent[];
+};
+
 export type Item = {
   id: string;
   name: string;
   column_values?: ColumnValue[];
+  client_portal?: ClientPortalMeta;
 };
 
 export type ItemWithStatus = Item & {
@@ -34,6 +87,7 @@ export type ItemSummary = ItemWithStatus & {
   overdue: boolean;
   attention: boolean;
   statusColumnId?: string;
+  clientPortal?: ClientPortalMeta;
 };
 
 export type Board = {
@@ -291,6 +345,7 @@ export const buildItemSummary = (item: ItemWithStatus): ItemSummary => {
     overdue: dueMeta.isOverdue,
     attention,
     statusColumnId: statusColumn?.id,
+    clientPortal: item.client_portal,
   };
 };
 

@@ -13,7 +13,11 @@ import {
   ListChecks,
   MailPlus,
   Copy,
-  CreditCard
+  CreditCard,
+  FileQuestion,
+  History,
+  Palette,
+  Rocket
 } from 'lucide-react';
 import adminApi from '../services/adminApi';
 
@@ -83,6 +87,71 @@ type BillingSummary = {
   };
 };
 
+type PortalSettings = {
+  portalName: string;
+  logoUrl: string;
+  primaryColor: string;
+  welcomeMessage: string;
+  supportEmail: string;
+};
+
+type SetupStatus = {
+  complete: boolean;
+  steps: Array<{
+    key: string;
+    label: string;
+    complete: boolean;
+  }>;
+  counts: {
+    clients: number;
+    portals: number;
+    itemPermissions: number;
+  };
+};
+
+type ActivityEvent = {
+  id: number;
+  clientId?: number | null;
+  boardId?: string | null;
+  itemId?: string | null;
+  eventType: string;
+  actorType: string;
+  actorName: string;
+  summary: string;
+  createdAt: number;
+};
+
+type FileRequest = {
+  id: number;
+  clientId: number;
+  boardId: string;
+  itemId: string;
+  title: string;
+  instructions: string;
+  dueAt?: number | null;
+  status: 'open' | 'submitted' | 'closed';
+  responseLinks?: string[];
+  responseNote?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type FileRequestForm = {
+  boardId: string;
+  itemId: string;
+  title: string;
+  instructions: string;
+  dueAt: string;
+};
+
+const defaultPortalSettings: PortalSettings = {
+  portalName: 'Client Approval Portal',
+  logoUrl: '',
+  primaryColor: '#0073ea',
+  welcomeMessage: 'Review approvals, files, decisions, and project updates in one secure client room.',
+  supportEmail: '',
+};
+
 const getApiError = (err: unknown, fallback: string) =>
   isAxiosError<{ error?: string }>(err)
     ? err.response?.data?.error || err.message || fallback
@@ -91,6 +160,11 @@ const getApiError = (err: unknown, fallback: string) =>
 export default function AdminDashboard() {
   const [clients, setClients] = useState<Client[]>([]);
   const [billing, setBilling] = useState<BillingSummary | null>(null);
+  const [portalSettings, setPortalSettings] = useState<PortalSettings>(defaultPortalSettings);
+  const [brandingForm, setBrandingForm] = useState<PortalSettings>(defaultPortalSettings);
+  const [setup, setSetup] = useState<SetupStatus | null>(null);
+  const [recentActivity, setRecentActivity] = useState<ActivityEvent[]>([]);
+  const [fileRequests, setFileRequests] = useState<FileRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -107,6 +181,16 @@ export default function AdminDashboard() {
   const [permissionsLoading, setPermissionsLoading] = useState(false);
   const [permissionsSaving, setPermissionsSaving] = useState(false);
   const [inviteDetails, setInviteDetails] = useState<InviteDetails | null>(null);
+  const [savingBranding, setSavingBranding] = useState(false);
+  const [fileRequestClient, setFileRequestClient] = useState<Client | null>(null);
+  const [fileRequestForm, setFileRequestForm] = useState<FileRequestForm>({
+    boardId: '',
+    itemId: '',
+    title: '',
+    instructions: '',
+    dueAt: '',
+  });
+  const [fileRequestSubmitting, setFileRequestSubmitting] = useState(false);
 
   useEffect(() => {
     // Get context from Monday
@@ -130,11 +214,79 @@ export default function AdminDashboard() {
       const response = await adminApi.get('/monday/clients');
       setClients(response.data.clients || []);
       setBilling(response.data.billing || null);
+      const settings = response.data.portalSettings || defaultPortalSettings;
+      setPortalSettings(settings);
+      setBrandingForm(settings);
+      setSetup(response.data.setup || null);
+      setRecentActivity(response.data.recentActivity || []);
+      setFileRequests(response.data.fileRequests || []);
     } catch (err: unknown) {
       console.error('Error fetching clients:', err);
       setError(getApiError(err, 'Failed to load clients. Please check if the backend is running.'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const saveBranding = async () => {
+    if (context?.isViewOnly) {
+      monday.execute('notice', { message: 'As a viewer, you are unable to change portal branding.', type: 'warn' });
+      return;
+    }
+
+    try {
+      setSavingBranding(true);
+      const response = await adminApi.put('/monday/admin/settings', brandingForm);
+      setPortalSettings(response.data.portalSettings || brandingForm);
+      setBrandingForm(response.data.portalSettings || brandingForm);
+      setSetup(response.data.setup || setup);
+      monday.execute('notice', { message: 'Portal branding saved.', type: 'success' });
+    } catch (err: unknown) {
+      monday.execute('notice', { message: getApiError(err, 'Failed to save portal branding'), type: 'error' });
+    } finally {
+      setSavingBranding(false);
+    }
+  };
+
+  const openFileRequest = (client: Client) => {
+    if (context?.isViewOnly) {
+      monday.execute('notice', { message: 'As a viewer, you are unable to request files.', type: 'warn' });
+      return;
+    }
+
+    setFileRequestClient(client);
+    setFileRequestForm({
+      boardId: context?.boardId ? String(context.boardId) : '',
+      itemId: '',
+      title: '',
+      instructions: '',
+      dueAt: '',
+    });
+  };
+
+  const submitFileRequest = async () => {
+    if (!fileRequestClient) return;
+    if (!fileRequestForm.boardId || !fileRequestForm.title.trim()) {
+      monday.execute('notice', { message: 'Board ID and request title are required.', type: 'warn' });
+      return;
+    }
+
+    try {
+      setFileRequestSubmitting(true);
+      await adminApi.post(`/monday/clients/${fileRequestClient.id}/file-requests`, {
+        boardId: fileRequestForm.boardId,
+        itemId: fileRequestForm.itemId || undefined,
+        title: fileRequestForm.title,
+        instructions: fileRequestForm.instructions,
+        dueAt: fileRequestForm.dueAt || undefined,
+      });
+      monday.execute('notice', { message: 'File request sent.', type: 'success' });
+      setFileRequestClient(null);
+      fetchClients();
+    } catch (err: unknown) {
+      monday.execute('notice', { message: getApiError(err, 'Failed to create file request'), type: 'error' });
+    } finally {
+      setFileRequestSubmitting(false);
     }
   };
 
@@ -270,6 +422,87 @@ export default function AdminDashboard() {
           </div>
         )}
 
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.8fr)]">
+          <div className="rounded-lg border border-[#d0d4d9] bg-white p-5 shadow-sm">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Rocket className="h-5 w-5 text-[#0073ea]" />
+                <div>
+                  <h2 className="text-lg font-bold text-[#323338]">Setup Wizard</h2>
+                  <p className="text-xs text-[#676879]">Launch checklist for a client-ready portal</p>
+                </div>
+              </div>
+              <span className={`rounded-full px-3 py-1 text-xs font-bold ${setup?.complete ? 'bg-[#dcf8e6] text-[#007f4e]' : 'bg-[#fff4d6] text-[#9a6700]'}`}>
+                {setup?.complete ? 'READY' : 'IN PROGRESS'}
+              </span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(setup?.steps || []).map((step) => (
+                <div key={step.key} className="flex items-center gap-3 rounded-md border border-[#d0d4d9] bg-[#f5f6f8] px-3 py-2">
+                  <CheckCircle2 className={`h-4 w-4 ${step.complete ? 'text-[#00a25b]' : 'text-[#676879]'}`} />
+                  <span className="text-sm font-medium text-[#323338]">{step.label}</span>
+                </div>
+              ))}
+              {!setup && (
+                <div className="text-sm text-[#676879]">Setup status will appear after the app loads account data.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-[#d0d4d9] bg-white p-5 shadow-sm">
+            <div className="mb-4 flex items-center gap-2">
+              <Palette className="h-5 w-5 text-[#0073ea]" />
+              <div>
+                <h2 className="text-lg font-bold text-[#323338]">Client Portal Brand</h2>
+                <p className="text-xs text-[#676879]">{portalSettings.portalName}</p>
+              </div>
+            </div>
+            <div className="grid gap-3">
+              <input
+                value={brandingForm.portalName}
+                onChange={(event) => setBrandingForm({ ...brandingForm, portalName: event.target.value })}
+                placeholder="Portal name"
+                className="rounded-md border border-[#d0d4d9] px-3 py-2 text-sm outline-none focus:border-[#0073ea]"
+              />
+              <textarea
+                value={brandingForm.welcomeMessage}
+                onChange={(event) => setBrandingForm({ ...brandingForm, welcomeMessage: event.target.value })}
+                placeholder="Welcome message"
+                rows={2}
+                className="rounded-md border border-[#d0d4d9] px-3 py-2 text-sm outline-none focus:border-[#0073ea]"
+              />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <input
+                  type="color"
+                  value={brandingForm.primaryColor}
+                  onChange={(event) => setBrandingForm({ ...brandingForm, primaryColor: event.target.value })}
+                  className="h-10 rounded-md border border-[#d0d4d9] bg-white px-2"
+                />
+                <input
+                  value={brandingForm.supportEmail}
+                  onChange={(event) => setBrandingForm({ ...brandingForm, supportEmail: event.target.value })}
+                  placeholder="Support email"
+                  className="rounded-md border border-[#d0d4d9] px-3 py-2 text-sm outline-none focus:border-[#0073ea]"
+                />
+              </div>
+              <input
+                value={brandingForm.logoUrl}
+                onChange={(event) => setBrandingForm({ ...brandingForm, logoUrl: event.target.value })}
+                placeholder="Logo URL"
+                className="rounded-md border border-[#d0d4d9] px-3 py-2 text-sm outline-none focus:border-[#0073ea]"
+              />
+              <button
+                type="button"
+                disabled={savingBranding || context?.isViewOnly}
+                onClick={() => void saveBranding()}
+                className="inline-flex items-center justify-center rounded-md bg-[#0073ea] px-4 py-2 text-sm font-semibold text-white hover:bg-[#005fb8] disabled:opacity-50"
+              >
+                {savingBranding ? 'Saving...' : 'Save Branding'}
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Stats Section */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-white p-5 rounded-lg border border-[#d0d4d9] shadow-sm">
@@ -298,6 +531,13 @@ export default function AdminDashboard() {
               {billing ? formatUsage(billing.usage.clientUpdatesMonthly) : '-'}
             </p>
             <p className="text-xs text-[#676879]">Client-posted updates</p>
+            <button
+              type="button"
+              className="mt-3 rounded-md border border-[#d0d4d9] px-3 py-1.5 text-xs font-semibold text-[#323338] hover:border-[#0073ea] hover:text-[#0073ea]"
+              onClick={() => monday.execute('openPlanSelection', {})}
+            >
+              Manage monday plan
+            </button>
           </div>
         </div>
 
@@ -324,6 +564,51 @@ export default function AdminDashboard() {
             ))}
           </div>
         )}
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-lg border border-[#d0d4d9] bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center gap-2">
+              <History className="h-4 w-4 text-[#0073ea]" />
+              <h2 className="text-base font-bold text-[#323338]">Recent Activity</h2>
+            </div>
+            <div className="space-y-2">
+              {recentActivity.length === 0 ? (
+                <p className="text-sm text-[#676879]">No client-room activity yet.</p>
+              ) : (
+                recentActivity.slice(0, 6).map((event) => (
+                  <div key={event.id} className="rounded-md border border-[#d0d4d9] bg-[#f5f6f8] px-3 py-2">
+                    <p className="text-sm font-semibold text-[#323338]">{event.summary}</p>
+                    <p className="text-xs text-[#676879]">{formatTimestamp(event.createdAt)}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-[#d0d4d9] bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center gap-2">
+              <FileQuestion className="h-4 w-4 text-[#0073ea]" />
+              <h2 className="text-base font-bold text-[#323338]">File Requests</h2>
+            </div>
+            <div className="space-y-2">
+              {fileRequests.length === 0 ? (
+                <p className="text-sm text-[#676879]">No file requests yet.</p>
+              ) : (
+                fileRequests.slice(0, 6).map((request) => (
+                  <div key={request.id} className="rounded-md border border-[#d0d4d9] bg-[#f5f6f8] px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-[#323338]">{request.title}</p>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${request.status === 'open' ? 'bg-[#fff4d6] text-[#9a6700]' : 'bg-[#dcf8e6] text-[#007f4e]'}`}>
+                        {request.status.toUpperCase()}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#676879]">Board {request.boardId}{request.itemId ? `, item ${request.itemId}` : ''}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* Search & Filter */}
         <div className="flex items-center gap-4 bg-white p-4 rounded-lg border border-[#d0d4d9] shadow-sm">
@@ -488,6 +773,14 @@ export default function AdminDashboard() {
                           <MailPlus className="h-3 w-3" />
                           Invite
                         </button>
+                        <button
+                          className="flex items-center gap-1 px-3 py-1.5 bg-white border border-[#d0d4d9] rounded hover:border-[#0073ea] hover:text-[#0073ea] transition-all text-xs font-medium"
+                          disabled={context?.isViewOnly}
+                          onClick={() => openFileRequest(client)}
+                        >
+                          <FileQuestion className="h-3 w-3" />
+                          Request Files
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -638,6 +931,87 @@ export default function AdminDashboard() {
         </div>
       )}
 
+      {fileRequestClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg bg-white rounded-lg shadow-xl overflow-hidden">
+            <div className="flex justify-between items-center p-5 border-b border-[#d0d4d9]">
+              <div>
+                <h2 className="text-xl font-bold text-[#323338]">Request Files</h2>
+                <p className="text-sm text-[#676879]">{fileRequestClient.name}</p>
+              </div>
+              <button onClick={() => setFileRequestClient(null)} className="text-[#676879] hover:text-[#323338]">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4 p-5">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[#323338]">Board ID</label>
+                <input
+                  value={fileRequestForm.boardId}
+                  onChange={(event) => setFileRequestForm({ ...fileRequestForm, boardId: event.target.value })}
+                  className="w-full rounded-md border border-[#d0d4d9] px-3 py-2 text-sm outline-none focus:border-[#0073ea]"
+                  placeholder="Open this app from a board to auto-fill"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[#323338]">Item ID <span className="text-[#676879]">(optional)</span></label>
+                <input
+                  value={fileRequestForm.itemId}
+                  onChange={(event) => setFileRequestForm({ ...fileRequestForm, itemId: event.target.value })}
+                  className="w-full rounded-md border border-[#d0d4d9] px-3 py-2 text-sm outline-none focus:border-[#0073ea]"
+                  placeholder="Attach request to a specific item"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[#323338]">Request Title</label>
+                <input
+                  value={fileRequestForm.title}
+                  onChange={(event) => setFileRequestForm({ ...fileRequestForm, title: event.target.value })}
+                  className="w-full rounded-md border border-[#d0d4d9] px-3 py-2 text-sm outline-none focus:border-[#0073ea]"
+                  placeholder="e.g. Upload signed agreement"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[#323338]">Due Date</label>
+                <input
+                  type="date"
+                  value={fileRequestForm.dueAt}
+                  onChange={(event) => setFileRequestForm({ ...fileRequestForm, dueAt: event.target.value })}
+                  className="w-full rounded-md border border-[#d0d4d9] px-3 py-2 text-sm outline-none focus:border-[#0073ea]"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[#323338]">Instructions</label>
+                <textarea
+                  value={fileRequestForm.instructions}
+                  onChange={(event) => setFileRequestForm({ ...fileRequestForm, instructions: event.target.value })}
+                  rows={4}
+                  className="w-full rounded-md border border-[#d0d4d9] px-3 py-2 text-sm outline-none focus:border-[#0073ea]"
+                  placeholder="Tell the client what to provide and where links should point."
+                />
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setFileRequestClient(null)}
+                  className="px-4 py-2 text-sm font-medium border border-[#d0d4d9] rounded-md text-[#323338] hover:bg-[#f5f6f8]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={fileRequestSubmitting}
+                  onClick={() => void submitFileRequest()}
+                  className="px-4 py-2 text-sm font-medium rounded-md bg-[#0073ea] text-white hover:bg-[#005fb8] disabled:opacity-50"
+                >
+                  {fileRequestSubmitting ? 'Sending...' : 'Send Request'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {permissionClient && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-2xl bg-white rounded-lg shadow-xl overflow-hidden">
@@ -725,4 +1099,14 @@ function formatUsage(metric: BillingMetric) {
 function getUsagePercent(metric: BillingMetric) {
   if (metric.unlimited || metric.limit === null || metric.limit <= 0) return 0;
   return Math.min(Math.round((metric.used / metric.limit) * 100), 100);
+}
+
+function formatTimestamp(value: number) {
+  if (!value) return '';
+  return new Date(value).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }

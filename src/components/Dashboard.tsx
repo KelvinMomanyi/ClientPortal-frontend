@@ -1,18 +1,19 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, type CSSProperties } from 'react';
 import {
   LayoutDashboard,
   LogOut,
   Layers,
-  CircleDot,
   BadgeCheck,
   Sparkles,
   AlertTriangle,
+  FileQuestion,
+  History,
 } from 'lucide-react';
 import { isAxiosError } from 'axios';
 import api from '../services/api';
 import { useAuth } from '../contexts/authContextValue';
 import ItemRow from './ItemRow';
-import type { Board, ItemWithStatus } from '../utils/mondayHelpers';
+import type { Board, ClientActivityEvent, ClientFileRequest, ItemWithStatus, PortalSettings } from '../utils/mondayHelpers';
 import {
   getStatusLabel,
   isDoneStatus,
@@ -20,8 +21,41 @@ import {
   compareItemsByFocus,
 } from '../utils/mondayHelpers';
 
+type ClientRoomSummary = {
+  pendingApprovals: number;
+  approved: number;
+  changesRequested: number;
+  openFileRequests: number;
+};
+
+type DashboardResponse = {
+  boards?: Board[];
+  portalSettings?: PortalSettings;
+  clientRoom?: {
+    summary?: ClientRoomSummary;
+    fileRequests?: ClientFileRequest[];
+    recentActivity?: ClientActivityEvent[];
+  };
+};
+
+const defaultPortalSettings: PortalSettings = {
+  portalName: 'Client Approval Portal',
+  logoUrl: '',
+  primaryColor: '#0073ea',
+  welcomeMessage: 'Review approvals, files, decisions, and project updates in one secure client room.',
+  supportEmail: '',
+};
+
 export default function Dashboard() {
   const [boards, setBoards] = useState<Board[]>([]);
+  const [portalSettings, setPortalSettings] = useState<PortalSettings>(defaultPortalSettings);
+  const [clientRoomSummary, setClientRoomSummary] = useState<ClientRoomSummary>({
+    pendingApprovals: 0,
+    approved: 0,
+    changesRequested: 0,
+    openFileRequests: 0,
+  });
+  const [recentActivity, setRecentActivity] = useState<ClientActivityEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { client, logout } = useAuth();
@@ -33,8 +67,16 @@ export default function Dashboard() {
     try {
       setLoading(true);
       setError(null);
-      const response = await api.get('/monday/dashboard');
+      const response = await api.get<DashboardResponse>('/monday/dashboard');
       setBoards(response.data.boards || []);
+      setPortalSettings(response.data.portalSettings || defaultPortalSettings);
+      setClientRoomSummary({
+        pendingApprovals: response.data.clientRoom?.summary?.pendingApprovals || 0,
+        approved: response.data.clientRoom?.summary?.approved || 0,
+        changesRequested: response.data.clientRoom?.summary?.changesRequested || 0,
+        openFileRequests: response.data.clientRoom?.summary?.openFileRequests || 0,
+      });
+      setRecentActivity(response.data.clientRoom?.recentActivity || []);
     } catch (err: unknown) {
       console.error('Error fetching dashboard', err);
       const message = isAxiosError<{ error?: string }>(err) ? err.response?.data?.error : undefined;
@@ -65,13 +107,16 @@ export default function Dashboard() {
 
   const summaryCards = [
     { label: 'Boards', value: loading ? '-' : summary.totalBoards, note: `Total items: ${loading ? '-' : summary.totalItems}`, icon: Layers },
+    { label: 'Pending Approval', value: loading ? '-' : clientRoomSummary.pendingApprovals, note: 'Waiting on decisions', icon: BadgeCheck },
+    { label: 'File Requests', value: loading ? '-' : clientRoomSummary.openFileRequests, note: 'Open requests', icon: FileQuestion },
     { label: 'Attention', value: loading ? '-' : summary.attention, note: 'Blocked or overdue', icon: AlertTriangle },
-    { label: 'Due Soon', value: loading ? '-' : summary.dueSoon, note: 'Next 7 days', icon: CircleDot },
-    { label: 'Completed', value: loading ? '-' : summary.completed, note: 'Marked as done', icon: BadgeCheck },
   ];
 
   return (
-    <div className="min-h-screen app-shell">
+    <div
+      className="min-h-screen app-shell"
+      style={{ '--brand': portalSettings.primaryColor } as CSSProperties}
+    >
       {/* ── Navbar ────────────────────────────────── */}
       <nav className="border-b border-[color:var(--border)] bg-white/80 backdrop-blur">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -82,10 +127,10 @@ export default function Dashboard() {
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="font-display text-lg font-semibold text-[color:var(--ink)]">Monday Client Portal</span>
+                  <span className="font-display text-lg font-semibold text-[color:var(--ink)]">{portalSettings.portalName}</span>
                   <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--bg-soft)] px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[color:var(--muted)]">Live Boards</span>
                 </div>
-                <p className="text-xs text-[color:var(--muted)]">All deliverables in one organized view</p>
+                <p className="text-xs text-[color:var(--muted)]">Approvals, files, decisions, and updates in one place</p>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-4">
@@ -117,18 +162,22 @@ export default function Dashboard() {
         <section className="mb-10">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.4em] text-[color:var(--muted)]">Workspace Overview</p>
-              <h1 className="font-display text-3xl font-semibold text-[color:var(--ink)] sm:text-4xl">Your boards, organized by status and priority</h1>
-              <p className="mt-2 max-w-2xl text-sm text-[color:var(--muted)]">Key items rise to the top with status, owner, due date, and priority. Expand any row to see the full field grid when you need deeper context.</p>
+              <p className="text-xs uppercase tracking-[0.4em] text-[color:var(--muted)]">Client Room</p>
+              <h1 className="font-display text-3xl font-semibold text-[color:var(--ink)] sm:text-4xl">{portalSettings.portalName}</h1>
+              <p className="mt-2 max-w-2xl text-sm text-[color:var(--muted)]">{portalSettings.welcomeMessage}</p>
+              {portalSettings.supportEmail ? (
+                <p className="mt-2 text-xs text-[color:var(--muted)]">Support: {portalSettings.supportEmail}</p>
+              ) : null}
             </div>
             <div className="rounded-3xl border border-[color:var(--border)] bg-white/80 px-5 py-4 shadow-sm">
-              <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">Status Signals</p>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                <span className="inline-flex items-center rounded-full px-3 py-1 font-semibold ring-1 ring-inset bg-emerald-100 text-emerald-800 ring-emerald-200">Done</span>
-                <span className="inline-flex items-center rounded-full px-3 py-1 font-semibold ring-1 ring-inset bg-amber-100 text-amber-900 ring-amber-200">In progress</span>
-                <span className="inline-flex items-center rounded-full px-3 py-1 font-semibold ring-1 ring-inset bg-sky-100 text-sky-800 ring-sky-200">Review</span>
-                <span className="inline-flex items-center rounded-full px-3 py-1 font-semibold ring-1 ring-inset bg-rose-100 text-rose-800 ring-rose-200">Blocked</span>
-                <span className="inline-flex items-center rounded-full px-3 py-1 font-semibold ring-1 ring-inset bg-slate-100 text-slate-700 ring-slate-200">No status</span>
+              <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">Decision Signals</p>
+              <div className="mt-3 grid gap-2 text-xs">
+                <span className="inline-flex items-center justify-between gap-4 rounded-full px-3 py-1 font-semibold ring-1 ring-inset bg-emerald-100 text-emerald-800 ring-emerald-200">
+                  Approved <b>{clientRoomSummary.approved}</b>
+                </span>
+                <span className="inline-flex items-center justify-between gap-4 rounded-full px-3 py-1 font-semibold ring-1 ring-inset bg-rose-100 text-rose-800 ring-rose-200">
+                  Changes requested <b>{clientRoomSummary.changesRequested}</b>
+                </span>
               </div>
             </div>
           </div>
@@ -154,6 +203,23 @@ export default function Dashboard() {
             })}
           </div>
         </section>
+
+        {recentActivity.length > 0 && (
+          <section className="mb-8 rounded-3xl border border-[color:var(--border)] bg-white/85 p-5 shadow-sm">
+            <div className="mb-3 flex items-center gap-2">
+              <History className="h-4 w-4 text-[color:var(--brand)]" />
+              <h2 className="font-display text-lg font-semibold text-[color:var(--ink)]">Recent decisions and requests</h2>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {recentActivity.slice(0, 6).map((event) => (
+                <div key={event.id} className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] px-3 py-2">
+                  <p className="text-sm font-semibold text-[color:var(--ink)]">{event.summary}</p>
+                  <p className="text-xs text-[color:var(--muted)]">{formatActivityTime(event.createdAt)}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Board data */}
         {loading ? (
@@ -300,4 +366,14 @@ export default function Dashboard() {
       </main>
     </div>
   );
+}
+
+function formatActivityTime(value: number) {
+  if (!value) return '';
+  return new Date(value).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
