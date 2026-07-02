@@ -75,6 +75,15 @@ type BillingMetric = {
 type BillingSummary = {
   status: string;
   active: boolean;
+  monetizationRequired?: boolean;
+  billingProvider?: string | null;
+  monday?: {
+    planId?: string | null;
+    billingPeriod?: string | null;
+    subscriptionDaysLeft?: number | null;
+    subscriptionIsTrial?: boolean;
+    subscriptionSyncedAt?: number | null;
+  };
   plan: {
     code: string;
     label: string;
@@ -194,7 +203,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     // Get context from Monday
-    monday.get('context').then((res) => {
+    monday.get('context').then(async (res) => {
       const nextContext = res.data as MondayContext;
       setContext(nextContext);
       if (nextContext.isViewOnly) {
@@ -202,11 +211,30 @@ export default function AdminDashboard() {
         setLoading(false);
         return;
       }
+      await syncSubscription(nextContext);
       fetchClients();
     }).catch(() => {
       fetchClients();
     });
   }, []);
+
+  const syncSubscription = async (payload?: unknown) => {
+    try {
+      await adminApi.post('/monday/admin/subscription/sync', payload || {});
+    } catch (err) {
+      console.warn('Subscription sync skipped or failed:', err);
+    }
+  };
+
+  const openPlanSelection = () => {
+    monday.execute('openPlanSelection', { isInPlanSelection: true }).catch((err) => {
+      console.error('Failed to open monday plan selection:', err);
+      monday.execute('notice', {
+        message: 'Plan selection is available after the app is live with monday monetization.',
+        type: 'warn',
+      });
+    });
+  };
 
   const fetchClients = async () => {
     try {
@@ -422,6 +450,26 @@ export default function AdminDashboard() {
           </div>
         )}
 
+        {billing && !billing.active && (
+          <div className="flex flex-col gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-bold">Subscription inactive</p>
+              <p>
+                {billing.monetizationRequired && !billing.monday?.planId
+                  ? 'No monday monetization plan is synced for this account.'
+                  : 'Update the monday app subscription to continue using the portal.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={openPlanSelection}
+              className="rounded-md bg-red-600 px-4 py-2 text-xs font-bold text-white hover:bg-red-700"
+            >
+              Choose Plan
+            </button>
+          </div>
+        )}
+
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.8fr)]">
           <div className="rounded-lg border border-[#d0d4d9] bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between gap-3">
@@ -534,10 +582,16 @@ export default function AdminDashboard() {
             <button
               type="button"
               className="mt-3 rounded-md border border-[#d0d4d9] px-3 py-1.5 text-xs font-semibold text-[#323338] hover:border-[#0073ea] hover:text-[#0073ea]"
-              onClick={() => monday.execute('openPlanSelection', {})}
+              onClick={openPlanSelection}
             >
               Manage monday plan
             </button>
+            {billing?.monday?.planId ? (
+              <p className="mt-2 text-[11px] text-[#676879]">
+                monday plan: {billing.monday.planId}
+                {billing.monday.billingPeriod ? ` (${billing.monday.billingPeriod})` : ''}
+              </p>
+            ) : null}
           </div>
         </div>
 
