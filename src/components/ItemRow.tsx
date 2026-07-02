@@ -21,6 +21,7 @@ export default function ItemRow({
   const [updates, setUpdates] = useState<ItemUpdate[]>([]);
   const [updatesLoaded, setUpdatesLoaded] = useState(false);
   const [loadingUpdates, setLoadingUpdates] = useState(false);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
   const [comment, setComment] = useState('');
   const [postingComment, setPostingComment] = useState(false);
   const { toast } = useToast();
@@ -50,6 +51,7 @@ export default function ItemRow({
 
     try {
       setLoadingUpdates(true);
+      setCommentsError(null);
       const response = await api.get(`/monday/items/${item.id}/updates`, {
         params: { boardId },
       });
@@ -57,7 +59,10 @@ export default function ItemRow({
       setUpdatesLoaded(true);
     } catch (err) {
       console.error('Failed to load item updates', err);
-      toast(getApiError(err, 'Failed to load comments. Please try again.'), 'error');
+      const message = getApiError(err, 'Failed to load comments. Please try again.');
+      setUpdatesLoaded(true);
+      setCommentsError(message);
+      toast(message, 'error');
     } finally {
       setLoadingUpdates(false);
     }
@@ -81,6 +86,7 @@ export default function ItemRow({
       const createdUpdate = response.data.update as ItemUpdate | undefined;
       setComment('');
       setUpdatesLoaded(true);
+      setCommentsError(null);
       if (createdUpdate) {
         setUpdates((current) => [createdUpdate, ...current]);
       } else {
@@ -89,7 +95,9 @@ export default function ItemRow({
       toast('Comment posted to Monday.', 'success');
     } catch (err) {
       console.error('Failed to post item update', err);
-      toast(getApiError(err, 'Failed to post comment. Please try again.'), 'error');
+      const message = getApiError(err, 'Failed to post comment. Please try again.');
+      setCommentsError(message);
+      toast(message, 'error');
     } finally {
       setPostingComment(false);
     }
@@ -269,7 +277,11 @@ export default function ItemRow({
             </div>
 
             <div className="mt-3 space-y-2">
-              {loadingUpdates && !updatesLoaded ? (
+              {commentsError ? (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {commentsError}
+                </div>
+              ) : loadingUpdates && !updatesLoaded ? (
                 <div className="rounded-lg border border-[color:var(--border)] bg-white px-3 py-2 text-sm text-[color:var(--muted)]">
                   Loading comments...
                 </div>
